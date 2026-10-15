@@ -299,12 +299,12 @@ function vnoise1(x, s = 0) {
 /* =====================================================================
    World layout (1 block = 1 m)
    ===================================================================== */
-const SX = 584, SY = 136, SZ = 176, N = SX * SY * SZ;
+const SX = 584, SY = 160, SZ = 176, N = SX * SY * SZ;
 const DZ = SX, DY = SX * SZ;
 const WL = 30;               // voxels with y < WL are water
 const SURF = WL - 0.15;      // rendered water surface
 const ZC = 88;               // river axis (z)
-const LMAX = 20;
+const LMAX = 28;
 
 const AIR = 0, WATER = 1, ROCK = 2, LIME = 3, LIME2 = 4, DEEP = 5, ANDE = 6, TUFF = 7, CALC = 8, DRIP = 9,
   GRAVEL = 10, SAND = 11, CLAY = 12, MUD = 13, LICHEN = 14, WORM = 15, AMETH = 16, PEARL = 17, RIM = 18;
@@ -314,7 +314,8 @@ const T_GROTTO = 1, T_TUNNEL = 2, T_SUMP = 3, T_CANYON = 4, T_HALL = 5, T_SIDE =
 const TAGPRI = [0, 2, 2, 3, 2, 1, 5, 2, 9, 8, 6, 7];
 
 const X_TUN0 = 30, X_TUN1 = 196, X_CAP0 = 178, X_CAP1 = 191;
-const X_CAN0 = 212, X_CAN1 = 366, X_CHOCK = 288;
+const X_CAN0 = 212, X_CAN1 = 366, CW = 18;   // canyon: walls ~37 m apart
+const X_SAG0 = 92, X_SAG1 = 120;              // mid-tunnel sump: the arch sags under the water
 const HALL = { x: 486, z: ZC, rx: 74, rz: 66, h: 54 };
 const LAKE = { x: 468, z: ZC + 2, rx: 62, rz: 46 };
 const ISLE = { x: 476, z: ZC - 4, r: 12 };
@@ -336,26 +337,30 @@ function setSolid(x, y, z, m) {
   vox[x + SX * (z + SZ * y)] = m;
 }
 
-function tunnelZ(x) { const t = clamp(x, X_TUN0, X_TUN1); return ZC + 12 * Math.sin((2 * Math.PI * (t - X_TUN0)) / (X_TUN1 - X_TUN0)); }
+function tunnelZ(x) { const t = clamp(x, X_TUN0, X_TUN1); return ZC + 15 * Math.sin((2 * Math.PI * (t - X_TUN0)) / (X_TUN1 - X_TUN0)); }
 function tunnelSlope(x) {
   if (x < X_TUN0 || x > X_TUN1) return 0;
-  return ((12 * 2 * Math.PI) / (X_TUN1 - X_TUN0)) * Math.cos((2 * Math.PI * (x - X_TUN0)) / (X_TUN1 - X_TUN0));
+  return ((15 * 2 * Math.PI) / (X_TUN1 - X_TUN0)) * Math.cos((2 * Math.PI * (x - X_TUN0)) / (X_TUN1 - X_TUN0));
 }
 function tunnelP(x) {
-  const a = 6.2 + 0.6 * vnoise1(x * 0.035, 11);
-  const s = 3.2 + 0.5 * vnoise1(x * 0.05, 23);
-  const ah = a * 0.76;
+  const a = 9.5 + 0.8 * vnoise1(x * 0.03, 11);   // half width: ~19 m across at the water
+  const s = 4.6 + 0.6 * vnoise1(x * 0.05, 23);   // vertical side walls
+  const ah = a * 0.78;                            // wide, flattened arch: crown ~12 m above the water
   const top = s + ah;
-  const cap = x < X_CAP0 ? 99 : top + 1 - (top + 3.4) * smooth01((x - X_CAP0) / (X_CAP1 - X_CAP0));
-  return { a, s, ah, top, cap };
+  const dip = smooth01((x - X_SAG0) / 10) - smooth01((x - X_SAG1) / 10);
+  let cap = dip > 0 ? top + 4 - (top + 7.5) * dip : 99;
+  if (x > X_CAP0) cap = Math.min(cap, top + 4 - (top + 7.5) * smooth01((x - X_CAP0) / (X_CAP1 - X_CAP0)));
+  const deep = 7 * (smooth01((x - X_SAG0 - 4) / 8) - smooth01((x - X_SAG1 - 2) / 8));
+  return { a, s, ah, top, cap, deep };
 }
 const fissOff = (x) => 0.9 * Math.sin(x * 0.13) + 0.5 * Math.sin(x * 0.29 + 1.0);
 const exitZ = (x) => EXITL.z0 + ((x - EXITL.x0) / (EXITL.x1 - EXITL.x0)) * (EXITL.z1 - EXITL.z0);
 
 // Glow-lichen "lamps" along the ceiling joint of the arched tunnel
 const LAMP = new Uint8Array(SX);
-for (let k = 0; k < 15; k++) {
-  const lx = Math.round(36 + 9.6 * k + (hash3(k, 1, 2, 9) - 0.5) * 2.4);
+for (let lx0 = 34; lx0 < X_CAP0 - 6; lx0 += 11) {
+  if (lx0 > X_SAG0 && lx0 < X_SAG1 + 8) continue;
+  const lx = Math.round(lx0 + (hash3(lx0, 1, 2, 9) - 0.5) * 3);
   for (let d = -1; d <= 1; d++) LAMP[lx + d] = 1;
 }
 
@@ -381,10 +386,10 @@ function strataAt(x, y, z) {
    Carving
    ===================================================================== */
 function carveGrotto() {
-  const cx = 17, cy = WL + 1, cz = ZC;
-  for (let x = 2; x <= 34; x++) for (let z = cz - 15; z <= cz + 15; z++) for (let y = 3; y <= WL + 12; y++) {
-    const dx = (x + 0.5 - cx) / 13.5, dz = (z + 0.5 - cz) / 11.5;
-    const dv = y + 0.5 - cy, dy = dv > 0 ? dv / 8.5 : dv / 5.5;
+  const cx = 19, cy = WL + 1, cz = ZC;
+  for (let x = 2; x <= 38; x++) for (let z = cz - 19; z <= cz + 19; z++) for (let y = 3; y <= WL + 14; y++) {
+    const dx = (x + 0.5 - cx) / 17, dz = (z + 0.5 - cz) / 16;
+    const dv = y + 0.5 - cy, dy = dv > 0 ? dv / 10.5 : dv / 6.5;
     const n = 0.22 * vnoise3(x * 0.13, y * 0.13, z * 0.13, 3) + 0.08 * vnoise3(x * 0.37, y * 0.37, z * 0.37, 4);
     if (dx * dx + dy * dy + dz * dz < 1 + n) { setOpen(x, y, z, T_GROTTO); continue; }
     if (y < WL - 2 && y >= 4) {
@@ -399,48 +404,51 @@ function carveTunnel() {
   for (let x = 24; x <= 200; x++) {
     const zc = tunnelZ(x), sl = tunnelSlope(x), cs = 1 / Math.sqrt(1 + sl * sl);
     const P = tunnelP(x), fo = fissOff(x);
-    const fissTop = P.top + 2.2 + 0.8 * vnoise1(x * 0.2, 5);
-    for (let z = Math.floor(zc - 11); z <= Math.ceil(zc + 11); z++) {
+    const fissTop = P.top + 3 + 1.0 * vnoise1(x * 0.2, 5);
+    for (let z = Math.floor(zc - 15); z <= Math.ceil(zc + 15); z++) {
       const u = (z + 0.5 - zc) * cs;
-      for (let y = WL - 8; y <= WL + 16; y++) {
+      for (let y = WL - 15; y <= WL + 18; y++) {
         const v = y + 0.5 - WL;
         if (v >= P.cap) continue;
-        const r = 0.3 * vnoise3(x * 0.16, y * 0.16, z * 0.16, 7) + 0.12 * vnoise3(x * 0.45, y * 0.45, z * 0.45, 8);
+        const r = 0.35 * vnoise3(x * 0.16, y * 0.16, z * 0.16, 7) + 0.14 * vnoise3(x * 0.45, y * 0.45, z * 0.45, 8);
         const au = Math.abs(u) + r;
         let open = false;
         if (v >= P.s) { const dv = ((v - P.s) * P.a) / P.ah; open = au * au + dv * dv < P.a * P.a; }
-        else if (v >= 0) open = au < P.a + (v < 1.3 ? 0.9 : 0);
+        else if (v >= 0) open = au < P.a + (v < 1.5 ? 1.1 : 0);
         else {
-          const f = -4.4 - 0.7 * vnoise2(x * 0.08, z * 0.08, 9) + 1.7 * (u / P.a) * (u / P.a);
-          open = v > f && au < P.a - 0.15 * -v;
+          const f = -6.2 - 0.9 * vnoise2(x * 0.07, z * 0.07, 9) + 2.6 * (u / P.a) * (u / P.a) - P.deep;
+          open = v > f && au < P.a - 0.16 * -v;
         }
-        if (!open && x < X_CAP0 + 2 && v >= P.top - 1.5 && v < fissTop && Math.abs(u - fo) < 0.75) open = true;
+        if (!open && x < X_CAP0 + 2 && v >= P.top - 1.5 && v < fissTop && Math.abs(u - fo) < 1.0) open = true;
         if (open) setOpen(x, y, z, T_TUNNEL);
       }
     }
   }
 }
 
-const GROOVES = [16, 29, 43, 58, 74];
-const canyonTop = (x) => 92 + 4 * vnoise1(x * 0.025, 31);
-const canyonFloor = (x) => -5.5 - 1.2 * vnoise1(x * 0.06, 37) - 4.5 * bump(x, X_CHOCK, 9);
+const GROOVES = [18, 34, 51, 69, 88, 104];
+const canyonTop = (x) => 116 + 4 * vnoise1(x * 0.025, 31);
+const canyonFloor = (x) => -7 - 1.5 * vnoise1(x * 0.06, 37);
 function carveCanyon() {
   for (let x = X_CAN0 - 4; x <= X_CAN1 + 4; x++) {
     const top = canyonTop(x), floor = canyonFloor(x);
     const gro = GROOVES.map((g, k) => vnoise1(x * 0.045, 50 + k) > -0.25);
-    for (let z = ZC - 7; z <= ZC + 7; z++) {
+    const nearEnd = x < X_CAN0 + 3 || x > X_CAN1 - 3;
+    for (let z = ZC - CW - 3; z <= ZC + CW + 3; z++) {
       const u = Math.abs(z - ZC);
       for (let y = Math.floor(WL + floor) - 1; y <= Math.ceil(WL + top) + 1; y++) {
         const v = y + 0.5 - WL;
         if (v > top || v < floor) continue;
-        let hw = 4.5;
-        if (v > top - 16) hw = 4.5 - 4.0 * ((v - (top - 16)) / 16);
-        for (let g = 0; g < GROOVES.length; g++) if (gro[g] && Math.abs(v - GROOVES[g]) < 0.5) hw += 1.0;
-        if (v > -0.8 && v < 1.4) hw += 0.95;
-        if (v < -2.5) hw -= (-2.5 - v) * 0.3;
+        let hw = CW + 0.5;
+        if (v > top - 30) hw = CW + 0.5 - (CW - 0.5) * ((v - (top - 30)) / 30);
+        for (let g = 0; g < GROOVES.length; g++) if (gro[g] && Math.abs(v - GROOVES[g]) < 0.5) hw += 1.2;
+        if (v > -0.8 && v < 1.4) hw += 1.1;
+        if (v < -3) hw -= (-3 - v) * 0.8;
         if (u >= hw) continue;
-        const e = 1.6 * vnoise3(x * 0.21, y * 0.21, z * 0.21, 61);
-        if (x < X_CAN0 + e || x > X_CAN1 + e) continue;
+        if (nearEnd) {
+          const e = 1.6 * vnoise3(x * 0.21, y * 0.21, z * 0.21, 61);
+          if (x < X_CAN0 + e || x > X_CAN1 + e) continue;
+        }
         setOpen(x, y, z, T_CANYON);
       }
     }
@@ -569,8 +577,9 @@ function carveWorm(sx, sy, sz, yaw, len, rad, seed) {
 }
 const WORMS = [
   [199, WL - 7, ZC - 3, -Math.PI / 2, 26, 1.1], [206, WL - 7.5, ZC + 1, Math.PI / 2 - 0.3, 22, 1.0],
-  [122, WL - 3.6, tunnelZ(122) + 5, Math.PI / 2, 18, 0.95], [64, WL - 3.4, tunnelZ(64) - 5, -Math.PI / 2 - 0.4, 16, 0.9],
-  [252, WL - 4.6, ZC - 3, -Math.PI / 2, 21, 0.9], [331, WL - 4.2, ZC + 3, Math.PI / 2, 24, 1.1],
+  [64, WL - 4, tunnelZ(64) - 8.5, -Math.PI / 2 - 0.4, 16, 0.9], [150, WL - 4, tunnelZ(150) + 8.5, Math.PI / 2, 18, 0.95],
+  [104, WL - 9, tunnelZ(104) - 7, -Math.PI / 2 - 0.2, 22, 1.1], [114, WL - 9.5, tunnelZ(114) + 7, Math.PI / 2 + 0.3, 20, 1.0],
+  [252, WL - 5, ZC - 16.5, -Math.PI / 2, 21, 0.9], [331, WL - 5, ZC + 16.5, Math.PI / 2, 24, 1.1],
   [384, WL - 12.5, ZC - 7, -Math.PI / 2 - 0.5, 26, 1.1], [398, WL - 11.5, ZC - 4, Math.PI / 2 + 0.2, 20, 1.0],
   [372, WL - 9, ZC - 1, Math.PI / 2 - 0.9, 16, 0.85],
   [432, WL - 10, ZC - 30, -Math.PI / 2 - 0.3, 22, 1.0], [452, WL - 11, ZC + 34, Math.PI / 2 + 0.3, 20, 1.0],
@@ -634,16 +643,6 @@ function boulder(cx, cy, cz, r, seed) {
     if (d < r + 0.8 * vnoise3(x * 0.35, y * 0.35, z * 0.35, seed)) setSolid(x, y, z, ROCK);
   }
 }
-function wedge(cx, cy, cz, rx, ry, rz, seed, m) {
-  for (let y = Math.floor(cy - ry - 2); y <= cy + ry + 2; y++) for (let z = Math.floor(cz - rz - 2); z <= cz + rz + 2; z++) for (let x = Math.floor(cx - rx - 2); x <= cx + rx + 2; x++) {
-    if (!inside(x, y, z)) continue;
-    const i = I(x, y, z);
-    if (vox[i] > 1) continue;
-    const dx = (x + 0.5 - cx) / rx, dy = (y + 0.5 - cy) / ry, dz = (z + 0.5 - cz) / rz;
-    if (dx * dx + dy * dy + dz * dz < 1 + 0.28 * vnoise3(x * 0.25, y * 0.25, z * 0.25, seed)) vox[i] = m;
-  }
-}
-
 function hallFormations() {
   const r = mulberry32(777);
   column(ISLE.x, ISLE.z, 5.0, 1);
@@ -722,7 +721,7 @@ function fillWater() {
    Surface painting (materials)
    ===================================================================== */
 const EMIT = [];
-EMIT[LICHEN] = [0.45, 0.95, 0.9, 14];
+EMIT[LICHEN] = [0.45, 0.95, 0.9, 24];
 EMIT[WORM] = [0.35, 0.8, 1.0, 7];
 EMIT[AMETH] = [0.78, 0.45, 1.0, 12];
 EMIT[PEARL] = [0.3, 0.6, 1.0, 12];
@@ -732,7 +731,7 @@ function isLampVoxel(x, y, z) {
   const P = tunnelP(x), v = y + 0.5 - WL;
   if (v < P.top - 0.4) return false;
   const sl = tunnelSlope(x), u = (z + 0.5 - tunnelZ(x)) / Math.sqrt(1 + sl * sl);
-  return Math.abs(u - fissOff(x)) < 1.3;
+  return Math.abs(u - fissOff(x)) < 1.6;
 }
 
 function chooseMat(x, y, z, up, dn, tg) {
@@ -1052,7 +1051,7 @@ function placeSprites(worms) {
       k++;
     }
   };
-  ceilTips(140, () => { const x = 34 + Math.floor(r() * 140); return [x, Math.round(tunnelZ(x) + (r() - 0.5) * 9)]; }, WL + 5);
+  ceilTips(200, () => { const x = 34 + Math.floor(r() * 140); return [x, Math.round(tunnelZ(x) + (r() - 0.5) * 17)]; }, WL + 5);
   ceilTips(60, () => [6 + Math.floor(r() * 24), ZC - 10 + Math.floor(r() * 20)], WL + 3);
   ceilTips(520, () => { const a = r() * 6.283, rr = Math.sqrt(r()); return [Math.round(HALL.x + Math.cos(a) * rr * HALL.rx), Math.round(HALL.z + Math.sin(a) * rr * HALL.rz)]; }, WL + 6);
   ceilTips(40, () => { const x = 548 + Math.floor(r() * 18); return [x, Math.round(exitZ(x) + (r() - 0.5) * 5)]; }, WL + 2);
@@ -1138,7 +1137,7 @@ function bakeLight(emissive) {
   for (const s of spriteLights) seed(s[0], [s[1], s[2], s[3]], s[4]);
   for (const i of poolCells) seed(i, [0.25, 0.85, 1.0], 7);
   // drifting bioluminescent plankton at the canyon water surface
-  for (let x = X_CAN0; x <= X_CAN1; x++) for (let z = ZC - 5; z <= ZC + 5; z++) {
+  for (let x = X_CAN0; x <= X_CAN1; x++) for (let z = ZC - CW; z <= ZC + CW; z++) {
     const i = I(x, WL - 1, z);
     if (vox[i] === WATER && vnoise2(x * 0.11, z * 0.11, 98) > 0.18) seed(i, [0.2, 0.5, 1.0], 9);
   }
@@ -1370,8 +1369,8 @@ function meshSprites() {
 function sampleMotes(count, want, seed) {
   const r = mulberry32(seed), p = [], s = [];
   const boxes = want === WATER
-    ? [[150, WL - 9, ZC - 22, 430, WL - 1, ZC + 22, 1], [404, WL - 17, ZC - 50, 540, WL - 1, ZC + 50, 2]]
-    : [[4, WL, ZC - 14, 200, WL + 14, ZC + 14, 1.2], [212, WL, ZC - 5, 366, WL + 60, ZC + 5, 1.4], [410, WL, ZC - 66, 562, WL + 50, ZC + 66, 3.2]];
+    ? [[60, WL - 12, ZC - 26, 430, WL - 1, ZC + 26, 1], [404, WL - 17, ZC - 50, 540, WL - 1, ZC + 50, 2]]
+    : [[4, WL, ZC - 26, 200, WL + 16, ZC + 26, 1.4], [212, WL, ZC - CW, 366, WL + 70, ZC + CW, 2.0], [410, WL, ZC - 66, 562, WL + 50, ZC + 66, 3.0]];
   const tot = boxes.reduce((a, b) => a + b[6], 0);
   for (let k = 0, tries = 0; k < count && tries < count * 60; tries++) {
     let pick = r() * tot, bx = boxes[0];
@@ -1835,16 +1834,12 @@ await stage('凿开岩层', 0.05);
 carveGrotto(); carveTunnel();
 await stage('劈开峡谷', 0.14);
 carveCanyon();
-wedge(X_CHOCK, WL + 5, ZC, 4.3, 8.5, 7, 301, ANDE);
-wedge(246, WL + 36, ZC, 3.0, 2.4, 6, 302, ANDE);
-wedge(322, WL + 55, ZC, 2.6, 2.0, 6, 303, DEEP);
-wedge(271, WL + 71, ZC, 4.0, 2.6, 6, 304, ANDE);
 await stage('掏空洞厅', 0.22);
 carveHall(); carveExit();
 await stage('引来潜流', 0.32);
-carveTube(SUMP1, 2.6, 401, T_SUMP);
-carveTube(SUMP2, 2.7, 402, T_SUMP);
-carveTube(SUMP3, 2.4, 403, T_SUMP);
+carveTube(SUMP1, 3.4, 401, T_SUMP);
+carveTube(SUMP2, 3.4, 402, T_SUMP);
+carveTube(SUMP3, 2.6, 403, T_SUMP);
 WORMS.forEach((w, k) => carveWorm(w[0], w[1], w[2], w[3], w[4], w[5], 500 + k));
 carveGeode();
 await stage('生长石笋与石柱', 0.4);
@@ -1902,7 +1897,7 @@ const U = {
   uFogCol: { value: new THREE.Color(0.006, 0.010, 0.018) }, uDeepCol: { value: new THREE.Color(0.006, 0.04, 0.07) },
   uFogDen: { value: 0.0105 }, uFogStart: { value: 0 },
   uWispPos: { value: new THREE.Vector3() }, uWispCol: { value: new THREE.Color(0.62, 0.8, 0.95).multiplyScalar(0.85) }, uWispRad: { value: 13 },
-  uAmb: { value: 1.6 }, uClip: { value: 0 }, uHall: { value: new THREE.Vector4(HALL.x, HALL.z, HALL.rx, HALL.rz) }, uBake: { value: 1.0 }, uHFall: { value: 22 }, uMist: { value: 1 },
+  uAmb: { value: 1.6 }, uClip: { value: 0 }, uHall: { value: new THREE.Vector4(HALL.x, HALL.z, HALL.rx, HALL.rz) }, uBake: { value: 1.96 }, uHFall: { value: 22 }, uMist: { value: 1 },
 };
 
 const tex = new THREE.DataArrayTexture((() => { const d = new Uint8Array(TEXD.length * 1024); TEXD.forEach((t, k) => d.set(t, k * 1024)); return d; })(), 16, 16, TEXD.length);
@@ -2056,13 +2051,15 @@ const pathPts = [];
 {
   const P = (x, y, z) => pathPts.push(new THREE.Vector3(x, y, z));
   P(11, BOAT_Y, ZC + 3); P(19, BOAT_Y, ZC + 1);
-  for (let x = 28; x <= 178; x += 7.5) P(x, BOAT_Y, tunnelZ(x));
+  for (let x = 28; x <= 88; x += 7.5) P(x, BOAT_Y, tunnelZ(x));
+  P(92, BOAT_Y, tunnelZ(92));
+  for (const [x, y] of [[98, WL - 3.2], [104, WL - 7], [111, WL - 8.5], [118, WL - 7], [124, WL - 3.2]]) P(x, y, tunnelZ(x));
+  P(129, BOAT_Y, tunnelZ(129));
+  for (let x = 136; x <= 178; x += 7.5) P(x, BOAT_Y, tunnelZ(x));
   P(181.5, BOAT_Y, tunnelZ(181.5));
   for (const s of SUMP1.slice(1)) P(s[0], s[1] + 0.4, s[2]);
   P(222, BOAT_Y, ZC);
-  for (let x = 230; x <= 274; x += 8) P(x, BOAT_Y, ZC);
-  P(279, BOAT_Y, ZC); P(282.6, WL - 4.6, ZC); P(288, WL - 6.6, ZC); P(293.4, WL - 4.6, ZC); P(297, BOAT_Y, ZC);
-  for (let x = 304; x <= 352; x += 8) P(x, BOAT_Y, ZC);
+  for (let x = 230; x <= 350; x += 8) P(x, BOAT_Y, ZC);
   P(355.5, BOAT_Y, ZC);
   for (const s of SUMP2.slice(1)) P(s[0], s[1] + 0.4, s[2]);
   P(423, BOAT_Y, ZC + 4);
@@ -2100,23 +2097,25 @@ function timeAtX(x) { for (let k = 0; k <= SAMPLES; k++) if (PS.p[k].x >= x) ret
 
 const CAPTIONS = [
   [0, '我梦见自己坐在一条小船上。四周是水，和没有尽头的黑。'],
-  [34, '水道像一条公路隧道。拱顶圆得出奇，又高又匀。'],
-  [92, '顶上的岩缝里，微光一盏接一盏，像隧道里的灯。'],
-  [168, '拱顶慢慢压低，一直压进水里。前面没有路了。'],
-  [186, '只能潜下去。'],
+  [34, '水道像一条公路隧道，又宽又高，拱顶的弧线匀得出奇。'],
+  [58, '顶上的岩缝里，微光一盏接一盏，像隧道里的灯。'],
+  [86, '拱顶忽然压低，一直压进水里。只能潜下去。'],
+  [104, '水下，隧道还在继续，比水面上更暗，也更安静。'],
+  [126, '浮出水面，拱形的水道又在头顶展开。'],
+  [168, '前方，拱顶又一次沉进水里。'],
+  [186, '再潜一次。'],
   [197, '水下的岩壁上，藏着一些灌满水的窄洞，深处有幽蓝的光。'],
-  [220, '浮出水面。两侧石壁笔直、平整，像被刀切开。'],
-  [244, '它们一直升进黑暗里。抬头，什么也看不见。'],
-  [272, '一块巨石卡在两壁之间，水从它底下穿过去。'],
-  [300, '巨石后面，峡谷还在往前延伸，水面泛着蓝色的微光。'],
-  [354, '又一次潜水。这一段很长，很长。'],
+  [220, '浮出水面。两侧石壁笔直、平整，相隔很远，像被刀切开。'],
+  [246, '它们一直升进黑暗里。抬头，什么也看不见。'],
+  [300, '峡谷长得看不到头，水面泛着蓝色的微光。'],
+  [354, '最后一次潜水。这一段很长，很长。'],
   [420, '然后，黑暗忽然变得无比辽阔。'],
   [440, '洞厅中央是一片静止的湖。头顶的萤光像星空，倒映在水里。'],
   [474, '湖心立着一根石柱，从水面一直撑到看不见的穹顶。'],
   [512, '岸边一层层的石坝里，盛着发光的水。'],
   [534, '河水还在往前流，流进更深的黑暗里……'],
 ];
-const SECTION_NAMES = [[0, '幽潭'], [28, '拱形水道'], [186, '第一处潜流'], [214, '峡谷'], [281, '巨石下的潜流'], [296, '峡谷'], [362, '第二处潜流'], [414, '地下湖洞厅'], [552, '暗流出口']];
+const SECTION_NAMES = [[0, '幽潭'], [28, '拱形水道'], [94, '第一处潜流'], [126, '拱形水道'], [187, '第二处潜流'], [214, '峡谷'], [362, '第三处潜流'], [414, '地下湖洞厅'], [552, '暗流出口']];
 const sectionAt = (x) => { let n = SECTION_NAMES[0][1]; for (const [sx, nm] of SECTION_NAMES) if (x >= sx) n = nm; return n; };
 
 /* =====================================================================
@@ -2173,7 +2172,7 @@ function drawProfile() {
   lab(424, '地下湖洞厅', 'rgba(216,229,236,0.8)');
   g.textBaseline = 'bottom';
   const dl = (x, text) => { let k = PROF.findIndex((p) => p.x >= x); const px = clamp(X(k) - 6 * dpr, 2, W - 40 * dpr); g.fillStyle = 'rgba(156,198,255,0.95)'; g.fillText(text, px, H - 2 * dpr); };
-  dl(196, '潜'); dl(286, '潜'); dl(380, '潜');
+  dl(110, '潜'); dl(198, '潜'); dl(380, '潜');
 }
 function drawPlayhead(u) {
   const cv = $('profile-fg'), g = cv.getContext('2d'), W = cv.width, H = cv.height;
@@ -2200,12 +2199,12 @@ controls.addEventListener('start', () => { userTook = true; controls.autoRotate 
 
 const VIEWS = {
   overview: { p: [566, 232, 392], t: [318, 28, 94] },
-  tunnel: { p: [62, WL + 3.6, tunnelZ(62) - 0.6], t: [98, WL + 3.4, tunnelZ(98)] },
-  canyon: { p: [229, WL + 1.9, ZC + 1.8], t: [262, WL + 34, ZC - 0.4] },
+  tunnel: { p: [46, WL + 4.2, tunnelZ(46) - 1], t: [84, WL + 6.5, tunnelZ(84)] },
+  canyon: { p: [228, WL + 2.2, ZC + 6], t: [272, WL + 40, ZC - 4] },
   hall: { p: [423, WL + 4.5, ZC + 14], t: [478, WL + 16, ZC - 6] },
   sumps: { p: [356, WL + 24, ZC + 92], t: [386, WL - 9, ZC - 4] },
 };
-const VIEW_X = { overview: 0, tunnel: 34, canyon: 224, hall: 422, sumps: 180 };
+const VIEW_X = { overview: 0, tunnel: 34, canyon: 226, hall: 422, sumps: 88 };
 
 let mode = 'orbit';
 let playing = false, started = false, journeyT = 0, speedMul = 1;
@@ -2289,8 +2288,8 @@ function updateBoat(dt) {
 
 function autoGaze(x) {
   let yaw = 0, pitch = 0;
-  pitch += 0.62 * bump(x, 252, 18) + 0.45 * bump(x, 332, 16) + 0.3 * bump(x, 448, 26) + 0.12 * bump(x, 98, 30);
-  yaw += 0.42 * bump(x, 462, 26) - 0.5 * bump(x, 515, 14);
+  pitch += 0.62 * bump(x, 254, 22) + 0.3 * bump(x, 286, 14) + 0.3 * bump(x, 314, 14) + 0.45 * bump(x, 336, 16) + 0.3 * bump(x, 448, 26) + 0.14 * bump(x, 62, 24) + 0.1 * bump(x, 152, 20);
+  yaw += 0.6 * bump(x, 286, 14) - 0.6 * bump(x, 314, 14) + 0.42 * bump(x, 462, 26) - 0.5 * bump(x, 515, 14);
   return [yaw, pitch];
 }
 function updateBoatCamera(dt) {
